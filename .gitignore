@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+
+# OS/editor files
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Data files that may include user or runtime data
+autoplan_games.json
+user_predictions.json
+teams_data.json
+
+# Logs
+*.log

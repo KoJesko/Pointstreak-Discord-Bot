@@ -1,0 +1,9 @@
+[Service]
+Type=simple
+WorkingDirectory=/home/kojesko/Discord Bot
+ExecStart=/home/kojesko/Discord\ Bot/.venv/bin/python /home/kojesko/Discord\ Bot/main_bot.py
+Restart=always
+RestartSec=5
+User=kojesko
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/kojesko/Discord Bot/.env
