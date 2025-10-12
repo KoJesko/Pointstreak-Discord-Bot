@@ -34,6 +34,45 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # --- State Management and Persistence ---
 active_game_trackers = {} 
 
+# --- App Commands Error Handling ---
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        missing = ', '.join(error.missing_permissions)
+        try:
+            await interaction.response.send_message(
+                f"You’re missing required permissions to use this command: {missing}.",
+                ephemeral=True
+            )
+        except discord.InteractionResponded:
+            await interaction.followup.send(
+                f"You’re missing required permissions to use this command: {missing}.",
+                ephemeral=True
+            )
+        return
+    if isinstance(error, app_commands.CheckFailure):
+        try:
+            await interaction.response.send_message(
+                "You don’t have permission to use this command in this channel.",
+                ephemeral=True
+            )
+        except discord.InteractionResponded:
+            await interaction.followup.send(
+                "You don’t have permission to use this command in this channel.",
+                ephemeral=True
+            )
+        return
+    # Fallback: log and notify
+    print(f"App command error: {type(error).__name__}: {error}")
+    try:
+        await interaction.response.send_message(
+            "An error occurred while running this command.", ephemeral=True
+        )
+    except discord.InteractionResponded:
+        await interaction.followup.send(
+            "An error occurred while running this command.", ephemeral=True
+        )
+
 def load_autoplans():
     """Loads auto-planned games from the JSON file."""
     if AUTOPLAN_FILE.exists():
@@ -371,6 +410,7 @@ def get_tracker_data(channel_id: int):
 
 @bot.tree.command(name="import_teams", description="[ADMIN] Scrapes a Pointstreak League page to import all team names and IDs.")
 @app_commands.default_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(manage_channels=True)
 @app_commands.describe(league_id="The league ID (e.g., '200' for Frontier League) to scrape for teams.")
 async def import_teams_command(interaction: discord.Interaction, league_id: str):
     """
@@ -419,6 +459,7 @@ async def import_teams_command(interaction: discord.Interaction, league_id: str)
 
 @bot.tree.command(name="track_game", description="Start tracking a specific Pointstreak game in a new thread.")
 @app_commands.default_permissions(manage_threads=True)
+@app_commands.checks.has_permissions(manage_threads=True)
 @app_commands.describe(game_id="The Pointstreak game ID (e.g., '514852').", team1_name="Away Team Name.", team2_name="Home Team Name.")
 async def track_game_command(interaction: discord.Interaction, game_id: str, team1_name: str, team2_name: str):
     """
@@ -458,6 +499,7 @@ async def track_game_command(interaction: discord.Interaction, game_id: str, tea
 
 @bot.tree.command(name="admin_autoplan", description="[ADMIN] Add a game or team to be continuously tracked in the admin channel.")
 @app_commands.default_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(manage_channels=True)
 @app_commands.describe(team_id="Team ID for season tracking (check teams_data.json).", game_id="Specific game ID for single-game tracking.", game_name="Name of the game (required with game_id).", team1_name="Away team name (required with game_id).", team2_name="Home team name (required with game_id).")
 async def admin_autoplan_command(interaction: discord.Interaction, team_id: str = None, game_id: str = None, game_name: str = None, team1_name: str = None, team2_name: str = None):
     """
@@ -465,9 +507,10 @@ async def admin_autoplan_command(interaction: discord.Interaction, team_id: str 
     """
     await interaction.response.defer(ephemeral=True, thinking=True)
 
-    admin_channel = bot.get_channel(ADMIN_CHANNEL_ID)
-    if not admin_channel or interaction.channel_id != ADMIN_CHANNEL_ID:
-        return await interaction.followup.send("This command must be run by a user with `Manage Channels` permission in the designated admin channel.", ephemeral=True)
+    # Only enforce admin channel restriction if configured
+    if ADMIN_CHANNEL_ID and ADMIN_CHANNEL_ID > 0 and interaction.channel_id != ADMIN_CHANNEL_ID:
+        return await interaction.followup.send("This command must be run in the designated admin channel.", ephemeral=True)
+    target_channel = bot.get_channel(ADMIN_CHANNEL_ID) if (ADMIN_CHANNEL_ID and ADMIN_CHANNEL_ID > 0) else interaction.channel
 
     autoplanned_games = load_autoplans()
     tracker_key = None
@@ -494,7 +537,7 @@ async def admin_autoplan_command(interaction: discord.Interaction, team_id: str 
             'poll_end_time': None,
             'total_runs': None,
             'relief_inning': 0, 
-            'target_channel_id': admin_channel.id
+            'target_channel_id': target_channel.id
         }
         initial_message = f"✅ **Team Autoplan Activated!**\nNow tracking all future live games for **{team_name}** (ID: `{team_id}`)."
     elif game_id and game_name and team1_name and team2_name:
@@ -515,7 +558,7 @@ async def admin_autoplan_command(interaction: discord.Interaction, team_id: str 
             'poll_end_time': None,
             'total_runs': None,
             'relief_inning': 0, 
-            'target_channel_id': admin_channel.id
+            'target_channel_id': target_channel.id
         }
         initial_message = f"✅ **Single Game Autoplan Activated!**\nNow continuously tracking Game ID `{game_id}`: **{game_name}**."
     else:
@@ -525,7 +568,7 @@ async def admin_autoplan_command(interaction: discord.Interaction, team_id: str 
         save_autoplans(autoplanned_games)
         json_key = str(tracker_key[1]) if tracker_key[0] == 'team' else tracker_key[0]
         active_game_trackers[tracker_key] = autoplanned_games[json_key]
-        await admin_channel.send(initial_message)
+        await target_channel.send(initial_message)
         await interaction.followup.send(f"Successfully added tracking to the list.", ephemeral=True)
     
     return 
@@ -625,6 +668,7 @@ Vote for **ALL** six categories below by reacting to the corresponding emojis!
 
 @bot.tree.command(name="resolve_random", description="[ADMIN] Closes the poll and resolves results randomly. For tie games or errors.")
 @app_commands.default_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(manage_channels=True)
 async def resolve_random_command(interaction: discord.Interaction):
     """
     Admin command to force a random resolution of the active poll in the current channel/thread.
